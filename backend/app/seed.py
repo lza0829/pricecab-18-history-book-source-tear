@@ -9,6 +9,10 @@ from app.db import connect
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
+# 种子价格的生效时刻固定为营业日起点：历史 as-of 口径不随启动墙钟漂移，
+# 当日全部销售夹具（08:10 起）都能对到初始价。
+SEED_EFFECTIVE_AT = "2026-11-16T00:00:00Z"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -110,6 +114,31 @@ def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
+def repair_book_from_history(conn) -> None:
+    """本末来源收口（对存量库幂等自愈）：
+
+    1. 作废分叉的影子展示表 price_book_display（不再有任何读者）；
+    2. 价签本展示字段按历史末行（生效时刻 + 写入序）整体重算。
+    只重写价签本投影，绝不删改 price_history 事实行。
+    """
+    conn.execute("DROP TABLE IF EXISTS price_book_display")
+    conn.execute(
+        '''
+        UPDATE price_book
+        SET current_price = (SELECT h.price FROM price_history h
+                             WHERE h.sku_code=price_book.sku_code
+                             ORDER BY h.effective_at DESC, h.id DESC LIMIT 1),
+            source_ticket_no = (SELECT h.source_ticket_no FROM price_history h
+                                WHERE h.sku_code=price_book.sku_code
+                                ORDER BY h.effective_at DESC, h.id DESC LIMIT 1),
+            effective_at = (SELECT h.effective_at FROM price_history h
+                            WHERE h.sku_code=price_book.sku_code
+                            ORDER BY h.effective_at DESC, h.id DESC LIMIT 1)
+        WHERE EXISTS (SELECT 1 FROM price_history h WHERE h.sku_code=price_book.sku_code)
+        '''
+    )
+
+
 def seed_if_empty() -> None:
     conn = connect()
     try:
@@ -118,6 +147,7 @@ def seed_if_empty() -> None:
                        "skipped_count INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "apply_batches", "strategy",
                        "strategy TEXT NOT NULL DEFAULT 'last_write_wins'")
+        repair_book_from_history(conn)
         n = conn.execute("SELECT COUNT(*) c FROM skus").fetchone()["c"]
         if n:
             conn.commit()
@@ -133,11 +163,11 @@ def seed_if_empty() -> None:
             )
             conn.execute(
                 "INSERT INTO price_book(sku_code, current_price, source_ticket_no, effective_at, updated_at) VALUES (?,?,NULL,?,?)",
-                (s["sku_code"], float(s["list_price"]), now, now),
+                (s["sku_code"], float(s["list_price"]), SEED_EFFECTIVE_AT, now),
             )
             conn.execute(
                 "INSERT INTO price_history(sku_code, price, source_ticket_no, effective_at, recorded_at) VALUES (?,?,NULL,?,?)",
-                (s["sku_code"], float(s["list_price"]), now, now),
+                (s["sku_code"], float(s["list_price"]), SEED_EFFECTIVE_AT, now),
             )
         for row in sales:
             conn.execute(

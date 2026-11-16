@@ -18,6 +18,11 @@ function tagClass(status) {
   if (status === 'mismatch') return 'bad'
   return 'muted'
 }
+
+function expectedSource(r) {
+  if (r.expected_price == null) return '—'
+  return r.expected_source_ticket_no || '初始'
+}
 </script>
 
 <template>
@@ -40,7 +45,7 @@ function tagClass(status) {
       <thead>
         <tr>
           <th>销售号</th><th>SKU</th><th>成交时刻</th><th>成交价</th>
-          <th>当时价签</th><th>差额</th><th>状态</th>
+          <th>当时价签</th><th>应生效来源</th><th>差额</th><th>状态</th>
         </tr>
       </thead>
       <tbody>
@@ -50,6 +55,7 @@ function tagClass(status) {
           <td>{{ r.sold_at }}</td>
           <td>{{ r.unit_price }}</td>
           <td>{{ r.expected_price ?? '—' }}</td>
+          <td>{{ expectedSource(r) }}</td>
           <td>{{ r.delta ?? '—' }}</td>
           <td><span class="tag" :class="tagClass(r.status)">{{ r.status }}</span></td>
         </tr>

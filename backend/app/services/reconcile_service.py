@@ -8,7 +8,11 @@ from app.repositories import prices as price_repo
 
 
 def reconcile_sales() -> dict[str, Any]:
-    """Compare each sale's unit_price with the price book value effective at sold_at."""
+    """Compare each sale's unit_price with the price book value effective at sold_at.
+
+    应生效价与其来源单从同一历史行带出（as-of 口径 = 生效时刻 + 写入序），
+    与价签本现行价 / 应用台来源展示同源于 price_history，可互证。
+    """
     conn = connect()
     try:
         sales = sales_repo.list_sales(conn)
@@ -17,7 +21,8 @@ def reconcile_sales() -> dict[str, Any]:
         mismatch = 0
         missing = 0
         for s in sales:
-            expected = price_repo.price_at(conn, s["sku_code"], s["sold_at"])
+            asof = price_repo.history_row_at(conn, s["sku_code"], s["sold_at"])
+            expected = float(asof["price"]) if asof else None
             sold = float(s["unit_price"])
             if expected is None:
                 status = "missing_price"
@@ -35,6 +40,8 @@ def reconcile_sales() -> dict[str, Any]:
                 {
                     **s,
                     "expected_price": expected,
+                    "expected_source_ticket_no": asof["source_ticket_no"] if asof else None,
+                    "expected_effective_at": asof["effective_at"] if asof else None,
                     "delta": delta,
                     "status": status,
                 }
